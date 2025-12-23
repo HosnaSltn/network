@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Metro Traffic Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: white; }
+        #container { width: 95%; max-width: 600px; margin: auto; padding: 20px; }
+        .stats-container { display: flex; justify-content: space-around; background: #333; padding: 15px; border-radius: 10px; margin-top: 15px; }
+        .stat-box { font-size: 18px; }
+        .stat-number { display: block; font-size: 32px; font-weight: bold; color: #00ff88; }
+        canvas { width: 100%; border: 2px solid #444; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        video { display: none; } /* Hide the raw video */
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h2>Live Traffic Monitor</h2>
+        <canvas id="displayCanvas"></canvas>
+        <video id="video" autoplay playsinline></video>
+        
+        <div class="stats-container">
+            <div class="stat-box">INCOMING <span id="in" class="stat-number">0</span></div>
+            <div class="stat-box">OUTGOING <span id="out" class="stat-number">0</span></div>
+            <div class="stat-box">ON-SCREEN <span id="current" class="stat-number">0</span></div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('displayCanvas');
+        const context = canvas.getContext('2d');
+        const socket = new WebSocket('ws://' + window.location.host + '/ws/video/');
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { video.srcObject = stream; });
+        let frameCounter = 0; // Add frame counter
+
+        function processFrame() {
+    canvas.width = 400; 
+    canvas.height = 300;
+    
+    // Draw Camera Frame
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // 1. Draw VERTICAL Crossing Line
+    context.strokeStyle = "#ff3300"; // Red line
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(canvas.width / 2, 0);
+    context.lineTo(canvas.width / 2, canvas.height);
+    context.stroke();
+
+    // 2. Draw Bounding Boxes from AI
+    context.strokeStyle = "#00ff88"; // Green boxes
+    context.lineWidth = 2;
+    latestBoxes.forEach(box => {
+        context.strokeRect(box.x, box.y, box.w, box.h);
+        // Optional: Label the box
+        context.fillStyle = "#00ff88";
+        context.fillText("Person", box.x, box.y - 5);
+    });
+
+    if (socket.readyState === WebSocket.OPEN) {
+        const data = canvas.toDataURL('image/jpeg', 0.4);
+        socket.send(JSON.stringify({ 'image': data }));
+    }
+    // Only send every 8th frame
+    frameCounter++;
+    if (frameCounter % 8 === 0 && socket.readyState === WebSocket.OPEN) {
+        const data = canvas.toDataURL('image/jpeg', 0.4);
+        socket.send(JSON.stringify({ 'image': data }));
+    }
+    requestAnimationFrame(processFrame);
+        }
+
+        video.addEventListener('play', () => {
+            requestAnimationFrame(processFrame);
+        });
+
+        let latestBoxes = []; // Global to store detections from server
+
+socket.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    document.getElementById('in').innerText = data.entry;
+    document.getElementById('out').innerText = data.exit;
+    document.getElementById('current').innerText = data.current_people;
+    latestBoxes = data.boxes; // Store boxes for the next frame draw
+};
+    </script>
+</body>
+</html>
