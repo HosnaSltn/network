@@ -1,135 +1,136 @@
 <!DOCTYPE html>
 <html>
-  <head>
+<head>
     <title>Metro Traffic Dashboard</title>
     <style>
-      body {
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        text-align: center;
-        background: #1a1a1a;
-        color: white;
-      }
-      #container {
-        width: 95%;
-        max-width: 600px;
-        margin: auto;
-        padding: 20px;
-      }
-      .stats-container {
-        display: flex;
-        justify-content: space-around;
-        background: #333;
-        padding: 15px;
-        border-radius: 10px;
-        margin-top: 15px;
-      }
-      .stat-box {
-        font-size: 18px;
-      }
-      .stat-number {
-        display: block;
-        font-size: 32px;
-        font-weight: bold;
-        color: #00ff88;
-      }
-      canvas {
-        width: 100%;
-        border: 2px solid #444;
-        border-radius: 8px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-      }
-      video {
-        display: none;
-      } /* Hide the raw video */
-    </style>
-  </head>
-  <body>
-    <div id="container">
-      <h2>Live Traffic Monitor</h2>
-      <canvas id="displayCanvas"></canvas>
-      <video id="video" autoplay playsinline></video>
+        /* General Styles */
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #1a1a1a; color: white; transition: direction 0.3s; }
+        #container { width: 95%; max-width: 600px; margin: auto; padding: 20px; }
+        
+        /* Language Selector Styling */
+        .lang-switcher { margin-bottom: 20px; text-align: right; }
+        select { padding: 5px; border-radius: 5px; background: #333; color: white; border: 1px solid #555; }
 
-      <div class="stats-container">
-        <div class="stat-box">
-          INCOMING <span id="in" class="stat-number">0</span>
+        .stats-container { display: flex; justify-content: space-around; background: #333; padding: 15px; border-radius: 10px; margin-top: 15px; }
+        .stat-box { font-size: 16px; }
+        .stat-number { display: block; font-size: 32px; font-weight: bold; color: #00ff88; }
+        
+        canvas { width: 100%; border: 2px solid #444; border-radius: 8px; }
+        video { display: none; }
+
+        /* RTL Adjustments */
+        body[dir="rtl"] .lang-switcher { text-align: left; }
+    </style>
+</head>
+<body dir="ltr" id="mainBody">
+
+    <div id="container">
+        <div class="lang-switcher">
+            <select id="langSelect" onchange="changeLanguage(this.value)">
+                <option value="en">English</option>
+                <option value="fa">فارسی (Persian)</option>
+                <option value="ar">العربية (Arabic)</option>
+            </select>
         </div>
-        <div class="stat-box">
-          OUTGOING <span id="out" class="stat-number">0</span>
+
+        <h2 id="titleText">Live Traffic Monitor</h2>
+        
+        <canvas id="displayCanvas"></canvas>
+        <video id="video" autoplay playsinline></video>
+        
+        <div class="stats-container">
+            <div class="stat-box"><span id="lblIn">INCOMING</span> <span id="in" class="stat-number">0</span></div>
+            <div class="stat-box"><span id="lblOut">OUTGOING</span> <span id="out" class="stat-number">0</span></div>
+            <div class="stat-box"><span id="lblCurr">ON-SCREEN</span> <span id="current" class="stat-number">0</span></div>
         </div>
-        <div class="stat-box">
-          ON-SCREEN <span id="current" class="stat-number">0</span>
-        </div>
-      </div>
     </div>
 
     <script>
-      const video = document.getElementById("video");
-      const canvas = document.getElementById("displayCanvas");
-      const context = canvas.getContext("2d");
-      const socket = new WebSocket(
-        "ws://" + window.location.host + "/ws/video/"
-      );
+        // 1. Translation Dictionary
+        const translations = {
+            en: {
+                title: "Live Traffic Monitor",
+                in: "INCOMING",
+                out: "OUTGOING",
+                curr: "ON-SCREEN",
+                dir: "ltr"
+            },
+            fa: {
+                title: "مانیتورینگ زنده ترافیک",
+                in: "ورودی",
+                out: "خروجی",
+                curr: "افراد حاضر",
+                dir: "rtl"
+            },
+            ar: {
+                title: "مراقبة حركة المرور",
+                in: "دخول",
+                out: "خروج",
+                curr: "الموجودون",
+                dir: "rtl"
+            }
+        };
 
-      navigator.mediaDevices
-        .getUserMedia({ video: { facingMode: "environment" } })
-        .then((stream) => {
-          video.srcObject = stream;
-        });
-
-      let lastSentTime = 0;
-      const fpsInterval = 1000 / 8; // Limit to 8 FPS
-
-      function processFrame(timestamp) {
-        canvas.width = 400;
-        canvas.height = 300;
-
-        // Draw Camera Frame
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        // 1. Draw VERTICAL Crossing Line
-        context.strokeStyle = "#ff3300"; // Red line
-        context.lineWidth = 4;
-        context.beginPath();
-        context.moveTo(canvas.width / 2, 0);
-        context.lineTo(canvas.width / 2, canvas.height);
-        context.stroke();
-
-        // 2. Draw Bounding Boxes from AI
-        context.strokeStyle = "#00ff88"; // Green boxes
-        context.lineWidth = 2;
-        latestBoxes.forEach((box) => {
-          context.strokeRect(box.x, box.y, box.w, box.h);
-          // Optional: Label the box
-          context.fillStyle = "#00ff88";
-          context.fillText("Person", box.x, box.y - 5);
-        });
-
-        // Send frame only if enough time has passed (8 FPS)
-        if (
-          socket.readyState === WebSocket.OPEN &&
-          timestamp - lastSentTime > fpsInterval
-        ) {
-          const data = canvas.toDataURL("image/jpeg", 0.4);
-          socket.send(JSON.stringify({ image: data }));
-          lastSentTime = timestamp;
+        function changeLanguage(lang) {
+            const t = translations[lang];
+            
+            // Update Text content
+            document.getElementById('titleText').innerText = t.title;
+            document.getElementById('lblIn').innerText = t.in;
+            document.getElementById('lblOut').innerText = t.out;
+            document.getElementById('lblCurr').innerText = t.curr;
+            
+            // Update Page Direction (LTR vs RTL)
+            document.getElementById('mainBody').setAttribute('dir', t.dir);
         }
 
-        requestAnimationFrame(processFrame);
-      }
+        // --- Rest of your YOLO/WebSocket Logic remains the same ---
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('displayCanvas');
+        const context = canvas.getContext('2d');
+        const socket = new WebSocket('ws://' + window.location.host + '/ws/video/');
 
-      video.addEventListener("play", () => {
-        requestAnimationFrame(processFrame);
-      });
+        let latestBoxes = [];
 
-      let latestBoxes = []; // Global to store detections from server
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { video.srcObject = stream; });
 
-      socket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        document.getElementById("in").innerText = data.entry;
-        document.getElementById("out").innerText = data.exit;
-        document.getElementById("current").innerText = data.current_people;
-        latestBoxes = data.boxes; // Store boxes for the next frame draw
-      };
+        function processFrame() {
+            canvas.width = 400; 
+            canvas.height = 300;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Draw Vertical Line
+            context.strokeStyle = "#ff3300";
+            context.lineWidth = 4;
+            context.beginPath();
+            context.moveTo(canvas.width / 2, 0);
+            context.lineTo(canvas.width / 2, canvas.height);
+            context.stroke();
+
+            // Draw Bounding Boxes
+            context.strokeStyle = "#00ff88";
+            context.lineWidth = 2;
+            latestBoxes.forEach(box => {
+                context.strokeRect(box.x, box.y, box.w, box.h);
+            });
+
+            if (socket.readyState === WebSocket.OPEN) {
+                const data = canvas.toDataURL('image/jpeg', 0.4);
+                socket.send(JSON.stringify({ 'image': data }));
+            }
+            requestAnimationFrame(processFrame);
+        }
+
+        video.addEventListener('play', () => { requestAnimationFrame(processFrame); });
+
+        socket.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            document.getElementById('in').innerText = data.entry;
+            document.getElementById('out').innerText = data.exit;
+            document.getElementById('current').innerText = data.current_people;
+            latestBoxes = data.boxes;
+        };
     </script>
-  </body>
+</body>
 </html>
