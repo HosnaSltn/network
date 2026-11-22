@@ -18,5 +18,5 @@ from django.urls import path
 from countingpeople import views
 
 urlpatterns = [
-    path('', views.index, name='index'), # This makes it the home page
+    path('', views.index, name='index'),
 ]

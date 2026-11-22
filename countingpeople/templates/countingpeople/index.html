@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <title>Metro Traffic Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Counting People Monitor</title>
     <style>
-      /* General Styles */
       body {
         font-family: "Segoe UI", Tahoma, sans-serif;
         text-align: center;
@@ -16,9 +17,9 @@
         max-width: 600px;
         margin: auto;
         padding: 20px;
+        box-sizing: border-box;
       }
 
-      /* Language Selector Styling */
       .lang-switcher {
         margin-bottom: 20px;
         text-align: right;
@@ -58,16 +59,19 @@
         display: none;
       }
 
-      /* RTL Adjustments */
       body[dir="rtl"] .lang-switcher {
         text-align: left;
+      }
+
+      #status:not(:empty) {
+        color: #ffc794;
       }
     </style>
   </head>
   <body dir="ltr" id="mainBody">
     <div id="container">
       <div class="lang-switcher">
-        <select id="langSelect" onchange="changeLanguage(this.value)">
+        <select id="langSelect" aria-label="Language" onchange="changeLanguage(this.value)">
           <option value="en">English</option>
           <option value="fa">فارسی (Persian)</option>
           <option value="ar">العربية (Arabic)</option>
@@ -75,9 +79,10 @@
       </div>
 
       <h2 id="titleText">Counting People Monitor</h2>
+      <p id="status" role="status"></p>
 
       <canvas id="displayCanvas"></canvas>
-      <video id="video" autoplay playsinline></video>
+      <video id="video" autoplay muted playsinline></video>
 
       <div class="stats-container">
         <div class="stat-box">
@@ -96,7 +101,6 @@
     </div>
 
     <script>
-      // 1. Translation Dictionary
       const translations = {
         en: {
           title: "Counting People Monitor",
@@ -104,6 +108,9 @@
           out: "OUTGOING",
           curr: "ON-SCREEN",
           dir: "ltr",
+          cameraError: "Camera unavailable. Check browser permissions and camera settings.",
+          connectionError: "The counting server is disconnected. Reload to reconnect.",
+          frameError: "The server could not read the camera frame.",
         },
         fa: {
           title: "مانیتورینگ شمارش افراد",
@@ -111,6 +118,9 @@
           out: "خروجی",
           curr: "افراد حاضر",
           dir: "rtl",
+          cameraError: "دوربین در دسترس نیست. مجوز مرورگر و تنظیمات دوربین را بررسی کنید.",
+          connectionError: "ارتباط با سرور شمارش قطع شد. صفحه را دوباره بارگذاری کنید.",
+          frameError: "سرور نتوانست تصویر دوربین را بخواند.",
         },
         ar: {
           title: "مراقبة عد الأشخاص",
@@ -118,45 +128,77 @@
           out: "خروج",
           curr: "الموجودون",
           dir: "rtl",
+          cameraError: "الكاميرا غير متاحة. تحقق من أذونات المتصفح وإعدادات الكاميرا.",
+          connectionError: "انقطع الاتصال بخادم العد. أعد تحميل الصفحة للاتصال مجددًا.",
+          frameError: "تعذر على الخادم قراءة صورة الكاميرا.",
         },
       };
 
+      let language = "en";
+      let statusKey = "";
+
+      function setStatus(key) {
+        statusKey = key;
+        document.getElementById("status").textContent = translations[language][key] || "";
+      }
+
       function changeLanguage(lang) {
+        language = lang;
         const t = translations[lang];
 
-        // Update Text content
         document.getElementById("titleText").innerText = t.title;
         document.getElementById("lblIn").innerText = t.in;
         document.getElementById("lblOut").innerText = t.out;
         document.getElementById("lblCurr").innerText = t.curr;
 
-        // Update Page Direction (LTR vs RTL)
+        document.documentElement.lang = lang;
         document.getElementById("mainBody").setAttribute("dir", t.dir);
+        setStatus(statusKey);
       }
 
-      // --- Rest of your YOLO/WebSocket Logic remains the same ---
       const video = document.getElementById("video");
       const canvas = document.getElementById("displayCanvas");
       const context = canvas.getContext("2d");
-      const socket = new WebSocket(
-        "ws://" + window.location.host + "/ws/video/"
-      );
+      const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${scheme}//${window.location.host}/ws/video/`);
+      const sendInterval = 1000 / 3;
 
       let latestBoxes = [];
-      let frameCount = 0;
+      let lastSentAt = -Infinity;
+      let awaitingResult = false;
 
-      navigator.mediaDevices
-        .getUserMedia({ video: { facingMode: "environment" } })
-        .then((stream) => {
-          video.srcObject = stream;
-        });
+      async function startCamera() {
+        try {
+          video.srcObject = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" },
+          });
+          await video.play();
+          requestAnimationFrame(processFrame);
+        } catch {
+          setStatus("cameraError");
+        }
+      }
 
-      function processFrame() {
-        canvas.width = 400;
-        canvas.height = 300;
+      function processFrame(timestamp) {
+        requestAnimationFrame(processFrame);
+        if (video.readyState < video.HAVE_CURRENT_DATA) return;
+
+        const width = 400;
+        const height = Math.round(width * video.videoHeight / video.videoWidth);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+          latestBoxes = [];
+        }
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Draw Vertical Line
+        if (socket.readyState === WebSocket.OPEN && !awaitingResult && timestamp - lastSentAt >= sendInterval) {
+          const image = canvas.toDataURL("image/jpeg", 0.4);
+          socket.send(JSON.stringify({ image }));
+          awaitingResult = true;
+          lastSentAt = timestamp;
+        }
+
         context.strokeStyle = "#ff3300";
         context.lineWidth = 4;
         context.beginPath();
@@ -164,33 +206,30 @@
         context.lineTo(canvas.width / 2, canvas.height);
         context.stroke();
 
-        // Draw Bounding Boxes
         context.strokeStyle = "#00ff88";
         context.lineWidth = 2;
         latestBoxes.forEach((box) => {
           context.strokeRect(box.x, box.y, box.w, box.h);
         });
 
-        // Only send every 8th frame
-        frameCount++;
-        if (socket.readyState === WebSocket.OPEN && frameCount % 8 === 0) {
-          const data = canvas.toDataURL("image/jpeg", 0.4);
-          socket.send(JSON.stringify({ image: data }));
-        }
-        requestAnimationFrame(processFrame);
       }
 
-      video.addEventListener("play", () => {
-        requestAnimationFrame(processFrame);
-      });
-
       socket.onmessage = (e) => {
+        awaitingResult = false;
         const data = JSON.parse(e.data);
+        if (data.error) {
+          setStatus("frameError");
+          return;
+        }
+        if (statusKey === "frameError") setStatus("");
         document.getElementById("in").innerText = data.entry;
         document.getElementById("out").innerText = data.exit;
         document.getElementById("current").innerText = data.current_people;
         latestBoxes = data.boxes;
       };
+      socket.onclose = () => setStatus("connectionError");
+
+      startCamera();
     </script>
   </body>
 </html>
